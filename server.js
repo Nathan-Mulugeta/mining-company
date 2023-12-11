@@ -31,7 +31,7 @@ app.use('/auth', require('./routes/authRoutes'));
 app.use('/users', require('./routes/userRoutes'));
 app.use('/managers', require('./routes/managerRoutes'));
 app.use('/drivers', require('./routes/driverRoutes'));
-// app.use('/sites', require('./routes/siteRoutes'));
+app.use('/sites', require('./routes/siteRoutes'));
 // app.use('/transportationTasks', require('./routes/transportationTaskRoutes'));
 app.use('/vehicles', require('./routes/vehicleRoutes'));
 
