@@ -1,6 +1,7 @@
 const Driver = require('../models/Driver');
 const Manager = require('../models/Manager');
 const User = require('../models/User');
+const mongoose = require('mongoose');
 
 // @desc    Get all users
 // @route   GET /users
@@ -21,73 +22,88 @@ const getAllUsers = async (req, res) => {
 // @route   POST /users
 // @access  Private
 const createNewUser = async (req, res) => {
-  const { username, password, firstName, lastName, roles, phone } = req.body;
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-  // Confirm data
-  if (!username || !password || !firstName || !lastName || !roles) {
-    res.status(400);
-    throw new Error('Please fill out the required fields');
-  }
+  try {
+    const { username, password, firstName, lastName, roles, phone } = req.body;
 
-  // Check for duplicate username
-  const duplicate = await User.findOne({ username })
-    .collation({ locale: 'en', strength: 2 })
-    .lean()
-    .exec();
-
-  if (duplicate) {
-    res.status(409);
-    throw new Error('Duplicate username');
-  }
-
-  const userObject =
-    !Array.isArray(roles) || !roles.length
-      ? { username, password, firstname: firstName, lastname: lastName }
-      : { username, password, firstname: firstName, lastname: lastName, roles };
-
-  // Create and store new user
-  const user = await User.create(userObject);
-
-  if (user) {
-    //created
-    if (!phone)
-      throw new Error('Phone number is required to create this user.');
-
-    try {
-      let profileCreation;
-      if (roles && roles.includes('Manager')) {
-        profileCreation = await Manager.create({
-          user: user._id,
-          phone,
-        });
-      } else if (roles && roles.includes('Driver')) {
-        profileCreation = await Driver.create({
-          user: user._id,
-          phone,
-        });
-      }
-
-      if (!profileCreation) {
-        // If the creation of Manager/Driver profile fails, roll back user creation
-        await User.findByIdAndDelete(user._id);
-
-        res.status(400);
-        throw new Error('Failed to create manager/driver profile');
-      }
-
-      // Both user and profile creation successful
-      res.status(201).json({ message: `New user '${username}' created` });
-    } catch (error) {
-      // Handle any errors during profile creation
-      if (user) {
-        await User.findByIdAndDelete(user._id);
-      }
-
-      res.status(500).json({ error: error.message });
+    // Confirm data
+    if (!username || !password || !firstName || !lastName || !roles) {
+      res.status(400);
+      throw new Error('Please fill out the required fields');
     }
-  } else {
-    res.status(400);
-    throw new Error('Invalid user data received');
+
+    // Check for duplicate username
+    const duplicate = await User.findOne({ username })
+      .collation({ locale: 'en', strength: 2 })
+      .lean()
+      .exec();
+
+    if (duplicate) {
+      res.status(409);
+      throw new Error('Duplicate username');
+    }
+
+    const userObject =
+      !Array.isArray(roles) || !roles.length
+        ? { username, password, firstname: firstName, lastname: lastName }
+        : {
+            username,
+            password,
+            firstname: firstName,
+            lastname: lastName,
+            roles,
+          };
+
+    // Create and store new user
+    const [user] = await User.create([userObject], { session });
+
+    if (!user) {
+      res.status(400);
+      throw new Error('Invalid user data received');
+    }
+
+    if (!phone) {
+      throw new Error('Phone number is required to create this user.');
+    }
+
+    let profileCreation;
+
+    if (roles && roles.includes('Manager')) {
+      profileCreation = await Manager.create([{ user: user._id, phone }], {
+        session,
+      });
+
+      console.log('We are in the Manager');
+    } else if (roles && roles.includes('Driver')) {
+      profileCreation = await Driver.create([{ user: user._id, phone }], {
+        session,
+      });
+      console.log('We are in the Driver');
+    }
+
+    if (!profileCreation) {
+      // If the creation of Manager/Driver profile fails, roll back user creation
+      await User.findByIdAndDelete(user._id);
+      await session.abortTransaction();
+      session.endSession();
+
+      res.status(400);
+      throw new Error('Failed to create manager/driver profile');
+    }
+
+    await session.commitTransaction();
+    session.endSession();
+
+    // Both user and profile creation successful
+    res.status(201).json({ message: `New user '${username}' created` });
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+
+    res.status(500);
+    throw new Error(error.message);
   }
 };
 
@@ -95,7 +111,10 @@ const createNewUser = async (req, res) => {
 // @route   PATCH /users
 // @access  Private
 const updateUser = async (req, res) => {
-  const { id, username, roles, active, password } = req.body;
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  const { id, username, roles, active, password, phone } = req.body;
 
   // Confirm data
   if (
@@ -103,7 +122,8 @@ const updateUser = async (req, res) => {
     !username ||
     !Array.isArray(roles) ||
     !roles.length ||
-    typeof active !== 'boolean'
+    typeof active !== 'boolean' ||
+    !phone
   ) {
     res.status(400);
     throw new Error('All fields except password are required');
@@ -133,7 +153,8 @@ const updateUser = async (req, res) => {
   const isUpdated =
     user.username !== username ||
     JSON.stringify(user.roles) !== JSON.stringify(roles) ||
-    user.active !== active;
+    user.active !== active ||
+    user.phone !== phone;
 
   if (!isUpdated && !password) {
     res.status(204).end();
@@ -144,10 +165,53 @@ const updateUser = async (req, res) => {
   user.username = username;
   user.roles = roles;
   user.active = active;
+  user.phone = phone;
 
-  const updatedUser = await user.save();
+  const updatedUser = await user.save({ session });
 
-  res.json({ message: `${updatedUser.username} updated` });
+  //  Update the manager or driver phone number
+  let profileUpdate;
+  let profileType;
+
+  try {
+    // Update Manager or Driver phone number if the role matches
+    if (roles && roles.includes('Manager')) {
+      profileUpdate = await Manager.findOneAndUpdate(
+        { user: id }, // Find Manager by user ID
+        { phone }, // Update phone number
+        { new: true, session } // Return updated document
+      );
+      profileType = 'Manager';
+    } else if (roles && roles.includes('Driver')) {
+      profileUpdate = await Driver.findOneAndUpdate(
+        { user: id }, // Find Driver by user ID
+        { phone }, // Update phone number
+        { new: true, session } // Return updated document
+      );
+      profileType = 'Driver';
+    }
+
+    const updatedProfile = await profileUpdate;
+
+    if (!updatedProfile) {
+      throw new Error(`Failed to update ${profileType} phone number`);
+    }
+
+    await session.commitTransaction();
+    session.endSession();
+
+    res.status(200).json({
+      message: `${updatedUser.username} and ${profileType} phone number updated`,
+    });
+  } catch (error) {
+    // Handle any errors during profile update
+    // Roll back user update if a profile update error occurs
+    await session.abortTransaction();
+    session.endSession();
+
+    res.status(500);
+    throw new Error(error.message);
+  }
 };
 
 // @desc    Delete a user
