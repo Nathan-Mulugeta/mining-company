@@ -1,5 +1,6 @@
 const Driver = require('../models/Driver');
 const Manager = require('../models/Manager');
+const TransportationTask = require('../models/TransportationTask');
 const User = require('../models/User');
 const mongoose = require('mongoose');
 
@@ -74,13 +75,10 @@ const createNewUser = async (req, res) => {
       profileCreation = await Manager.create([{ user: user._id, phone }], {
         session,
       });
-
-      console.log('We are in the Manager');
     } else if (roles && roles.includes('Driver')) {
       profileCreation = await Driver.create([{ user: user._id, phone }], {
         session,
       });
-      console.log('We are in the Driver');
     }
 
     if (!profileCreation) {
@@ -218,33 +216,73 @@ const updateUser = async (req, res) => {
 // @route   DELETE /users
 // @access  Private
 const deleteUser = async (req, res) => {
-  const { id } = req.body;
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-  // Confirm data
-  if (!id) {
-    res.status(400);
-    throw new Error('User ID Required');
+  try {
+    const { id } = req.body;
+
+    // Find the user to delete
+    const user = await User.findById(id).session(session);
+
+    if (!user) {
+      res.status(404);
+      throw new Error('User not found');
+    }
+
+    // Find associated Manager or Driver profile
+    let profileModel;
+    let profile = await Manager.findOne({ user: id }).session(session);
+    if (profile) {
+      profileModel = Manager;
+    } else {
+      profileModel = Driver;
+      profile = await profileModel.findOne({ user: id }).session(session);
+    }
+
+    if (!profileModel) {
+      await session.abortTransaction();
+      session.endSession();
+
+      res.status(500).json({
+        message: 'Could not find the correct associated manager/driver profile',
+      });
+    }
+
+    // Check if the user is a Driver and has an assigned TransactionTask
+    if (profileModel === Driver) {
+      const hasTransactionTask = await TransportationTask.exists({
+        assignedDriver: id,
+      }).session(session);
+
+      if (hasTransactionTask) {
+        res.status(400);
+        throw new Error(
+          'Cannot delete: Driver has an assigned TransactionTask'
+        );
+      }
+    }
+
+    // Delete Manager/Driver profile if found
+    await profileModel.findByIdAndDelete(profile._id).session(session);
+
+    // Delete the user
+    await User.findByIdAndDelete(id).session(session);
+
+    // Commit the transaction
+    await session.commitTransaction();
+    session.endSession();
+
+    res
+      .status(200)
+      .json({ message: `User with '${user.username}' username deleted` });
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+
+    res.status(500);
+    throw new Error(error.message);
   }
-
-  // Does the user still have assigned notes?
-  //   const note = await Note.findOne({ user: id }).lean().exec();
-  //   if (note) {
-  //     return res.status(400).json({ message: 'User has assigned notes' });
-  //   }
-
-  // Does the user exist to delete?
-  const user = await User.findById(id).exec();
-
-  if (!user) {
-    res.status(400);
-    throw new Error('User not found');
-  }
-
-  const result = await user.deleteOne();
-
-  const reply = `Username ${user.username} with ID ${user._id} deleted`;
-
-  res.json(reply);
 };
 
 module.exports = {
