@@ -1,5 +1,6 @@
+const Driver = require('../models/Driver');
+const Manager = require('../models/Manager');
 const User = require('../models/User');
-const bcrypt = require('bcrypt');
 
 // @desc    Get all users
 // @route   GET /users
@@ -20,10 +21,10 @@ const getAllUsers = async (req, res) => {
 // @route   POST /users
 // @access  Private
 const createNewUser = async (req, res) => {
-  const { username, password, firstName, lastName, roles } = req.body;
+  const { username, password, firstName, lastName, roles, phone } = req.body;
 
   // Confirm data
-  if (!username || !password || !firstName || !lastName) {
+  if (!username || !password || !firstName || !lastName || !roles) {
     res.status(400);
     throw new Error('Please fill out the required fields');
   }
@@ -49,7 +50,41 @@ const createNewUser = async (req, res) => {
 
   if (user) {
     //created
-    res.status(201).json({ message: `New user '${username}' created` });
+    if (!phone)
+      throw new Error('Phone number is required to create this user.');
+
+    try {
+      let profileCreation;
+      if (roles && roles.includes('Manager')) {
+        profileCreation = await Manager.create({
+          user: user._id,
+          phone,
+        });
+      } else if (roles && roles.includes('Driver')) {
+        profileCreation = await Driver.create({
+          user: user._id,
+          phone,
+        });
+      }
+
+      if (!profileCreation) {
+        // If the creation of Manager/Driver profile fails, roll back user creation
+        await User.findByIdAndDelete(user._id);
+
+        res.status(400);
+        throw new Error('Failed to create manager/driver profile');
+      }
+
+      // Both user and profile creation successful
+      res.status(201).json({ message: `New user '${username}' created` });
+    } catch (error) {
+      // Handle any errors during profile creation
+      if (user) {
+        await User.findByIdAndDelete(user._id);
+      }
+
+      res.status(500).json({ error: error.message });
+    }
   } else {
     res.status(400);
     throw new Error('Invalid user data received');
