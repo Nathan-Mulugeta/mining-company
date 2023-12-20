@@ -5,7 +5,7 @@ const Driver = require('../models/Driver');
 // @access  Private
 const getAllDrivers = async (req, res) => {
   // Get all drivers from MongoDB
-  const drivers = await Driver.find().lean();
+  const drivers = await Driver.find().populate('user').lean();
 
   //   If no drivers
   if (!drivers?.length) {

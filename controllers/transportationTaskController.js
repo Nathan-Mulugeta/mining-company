@@ -31,7 +31,16 @@ const validateTaskInput = (req) => {
 // @route   GET /transportationTasks
 // @access  Public
 const getAllTransportationTasks = async (req, res) => {
-  const tasks = await TransportationTask.find().lean();
+  const tasks = await TransportationTask.find()
+    .populate({ path: 'filledBy', select: '-password' })
+    .populate('source')
+    .populate('destination')
+    .populate('assignedVehicle')
+    .populate({
+      path: 'assignedDriver',
+      populate: { path: 'user' },
+    })
+    .lean();
   if (!tasks.length) {
     throw new Error('No transportation tasks found');
   }
