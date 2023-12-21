@@ -4,7 +4,7 @@ const router = express.Router();
 const verifyJWT = require('../middleware/verifyJWT');
 const checkRole = require('../middleware/checkRole');
 
-// router.use(verifyJWT);
+router.use(verifyJWT);
 
 router
   .route('/')
