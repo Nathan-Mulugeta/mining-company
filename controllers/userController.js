@@ -2,6 +2,7 @@ const Driver = require('../models/Driver');
 const Manager = require('../models/Manager');
 const TransportationTask = require('../models/TransportationTask');
 const User = require('../models/User');
+const Analyst = require('../models/Analyst');
 const mongoose = require('mongoose');
 
 // @desc    Get all users
@@ -79,13 +80,15 @@ const createNewUser = async (req, res) => {
       profileCreation = await Driver.create([{ user: user._id, phone }], {
         session,
       });
+    } else if (roles && roles.includes('Analyst')) {
+      profileCreation = await Analyst.create([{ user: user._id, phone }], {
+        session,
+      });
     }
 
     if (!profileCreation) {
       // If the creation of Manager/Driver profile fails, roll back user creation
       await User.findByIdAndDelete(user._id);
-      await session.abortTransaction();
-      session.endSession();
 
       res.status(400);
       throw new Error('Failed to create manager/driver profile');
