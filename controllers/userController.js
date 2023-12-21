@@ -3,6 +3,7 @@ const Manager = require('../models/Manager');
 const TransportationTask = require('../models/TransportationTask');
 const User = require('../models/User');
 const Analyst = require('../models/Analyst');
+const Admin = require('../models/Admin');
 const mongoose = require('mongoose');
 
 // @desc    Get all users
@@ -82,6 +83,10 @@ const createNewUser = async (req, res) => {
       });
     } else if (roles && roles.includes('Analyst')) {
       profileCreation = await Analyst.create([{ user: user._id, phone }], {
+        session,
+      });
+    } else if (roles && roles.includes('Admin')) {
+      profileCreation = await Admin.create([{ user: user._id, phone }], {
         session,
       });
     }
